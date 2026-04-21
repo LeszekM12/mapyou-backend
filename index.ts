@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { workoutsRouter } from './workouts.js';
 import { pushRouter }     from './pushService.js';
+import { liveRouter }     from './liveTracking.js';
 
 const app  = express();
 const PORT = process.env.PORT ?? 3000;
@@ -65,6 +66,7 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.use('/workouts', workoutsRouter);
 app.use('/push',     pushRouter);
+app.use('/live',     liveRouter);
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 
