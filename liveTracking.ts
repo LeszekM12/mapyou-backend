@@ -239,8 +239,18 @@ liveRouter.post('/resume', (req: Request, res: Response) => {
 // ── POST /live/finish ─────────────────────────────────────────────────────────
 
 liveRouter.post('/finish', (req: Request, res: Response) => {
-  const { token } = req.body as { token: string };
-  const session = sessions.get(token);
+  // sendBeacon wysyła jako text/plain — parsuj oba formaty
+  let token: string | undefined;
+  if (typeof req.body === 'string') {
+    try { token = JSON.parse(req.body).token; } catch { token = undefined; }
+  } else {
+    token = (req.body as { token?: string }).token;
+  }
+  if (!token) {
+    res.status(400).json({ status: 'error', message: 'Missing token' });
+    return;
+  }
+  const session = sessions.get(token as string);
   if (!session) {
     res.status(404).json({ status: 'error', message: 'Session not found' });
     return;
