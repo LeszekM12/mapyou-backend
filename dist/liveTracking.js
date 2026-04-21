@@ -172,4 +172,36 @@ exports.liveRouter.get('/', (_req, res) => {
     const active = [...sessions.values()].filter(s => s.status !== 'finished').length;
     res.json({ status: 'ok', totalSessions: sessions.size, activeSessions: active });
 });
+const invites = new Map();
+// Czyść stare invite kody po 7 dniach
+setInterval(() => {
+    const now = Date.now();
+    for (const [code, inv] of invites.entries()) {
+        if (now - inv.created > 7 * 24 * 60 * 60 * 1000)
+            invites.delete(code);
+    }
+}, 60 * 60 * 1000);
+function randomCode() {
+    return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+exports.liveRouter.post('/invite', (req, res) => {
+    const { name, pushSub } = req.body;
+    if (!name || !pushSub) {
+        res.status(400).json({ status: 'error', message: 'Missing name or pushSub' });
+        return;
+    }
+    const code = randomCode();
+    invites.set(code, { name, pushSub, created: Date.now() });
+    console.log(`[Live] Invite created: ${code} for ${name}`);
+    res.json({ status: 'ok', code });
+});
+// ── GET /live/invite/:code — pobierz dane zaproszenia ───────────────────────
+exports.liveRouter.get('/invite/:code', (req, res) => {
+    const inv = invites.get(req.params.code.toUpperCase());
+    if (!inv) {
+        res.status(404).json({ status: 'error', message: 'Invite not found or expired' });
+        return;
+    }
+    res.json({ status: 'ok', name: inv.name, pushSub: inv.pushSub });
+});
 //# sourceMappingURL=liveTracking.js.map

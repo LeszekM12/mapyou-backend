@@ -246,3 +246,48 @@ liveRouter.get('/', (_req: Request, res: Response) => {
   const active = [...sessions.values()].filter(s => s.status !== 'finished').length;
   res.json({ status: 'ok', totalSessions: sessions.size, activeSessions: active });
 });
+
+// ── POST /live/invite — zapisz subskrypcję i zwróć krótki kod ───────────────
+// Body: { name: string, pushSub: PushSubscription }
+// Zwraca: { code: "ABC12345" }
+
+interface InviteRecord {
+  name:    string;
+  pushSub: object;
+  created: number;
+}
+const invites = new Map<string, InviteRecord>();
+
+// Czyść stare invite kody po 7 dniach
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, inv] of invites.entries()) {
+    if (now - inv.created > 7 * 24 * 60 * 60 * 1000) invites.delete(code);
+  }
+}, 60 * 60 * 1000);
+
+function randomCode(): string {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+
+liveRouter.post('/invite', (req: Request, res: Response) => {
+  const { name, pushSub } = req.body as { name: string; pushSub: object };
+  if (!name || !pushSub) {
+    res.status(400).json({ status: 'error', message: 'Missing name or pushSub' });
+    return;
+  }
+  const code = randomCode();
+  invites.set(code, { name, pushSub, created: Date.now() });
+  console.log(`[Live] Invite created: ${code} for ${name}`);
+  res.json({ status: 'ok', code });
+});
+
+// ── GET /live/invite/:code — pobierz dane zaproszenia ───────────────────────
+liveRouter.get('/invite/:code', (req: Request, res: Response) => {
+  const inv = invites.get(req.params.code.toUpperCase());
+  if (!inv) {
+    res.status(404).json({ status: 'error', message: 'Invite not found or expired' });
+    return;
+  }
+  res.json({ status: 'ok', name: inv.name, pushSub: inv.pushSub });
+});
