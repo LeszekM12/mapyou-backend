@@ -98,7 +98,7 @@ exports.liveRouter.post('/update', (req, res) => {
 });
 // ── GET /live/:token ──────────────────────────────────────────────────────────
 // Zwraca pełny stan sesji (dla odbiorcy oglądającego trasę)
-exports.liveRouter.get('/:token', (req, res) => {
+exports.liveRouter.get('/status/:token', (req, res) => {
     const session = sessions.get(req.params.token);
     if (!session) {
         res.status(404).json({ status: 'error', message: 'Session not found or expired' });
@@ -117,7 +117,7 @@ exports.liveRouter.get('/:token', (req, res) => {
 });
 // ── GET /live/status/:token ───────────────────────────────────────────────────
 // Lekki endpoint — tylko status (dla pollingu co 30-60s)
-exports.liveRouter.get('/status/:token', (req, res) => {
+exports.liveRouter.get('/:token', (req, res) => {
     const session = sessions.get(req.params.token);
     if (!session) {
         res.json({ status: 'ok', session: 'not_found' });
