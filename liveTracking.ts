@@ -37,6 +37,10 @@ export interface LiveSession {
 
 const sessions = new Map<string, LiveSession>();
 
+// Mapa endpoint → token — pozwala znajomemu znaleźć aktywną sesję
+// po endpointcie swojej pushSub którą wysłał właściciel treningu
+const endpointToToken = new Map<string, string>();
+
 // Czyść zakończone sesje po 30 min
 const CLEANUP_AFTER_MS = 30 * 60 * 1000;
 setInterval(() => {
@@ -117,6 +121,13 @@ liveRouter.post('/start', async (req: Request, res: Response) => {
     const sent = results.filter(r => r.status === 'fulfilled').length;
     session.notifiedSubs = friendSubs.map(s => s.endpoint);
     console.log(`[Live] Push sent to ${sent}/${friendSubs.length} friends`);
+  }
+
+  // Zapisz mapowanie endpoint → token dla każdego znajomego
+  if (Array.isArray(friendSubs)) {
+    for (const sub of friendSubs) {
+      endpointToToken.set(sub.endpoint, token);
+    }
   }
 
   res.status(201).json({ status: 'ok', token, message: 'Session started' });
@@ -236,8 +247,41 @@ liveRouter.post('/finish', (req: Request, res: Response) => {
   }
   session.status    = 'finished';
   session.updatedAt = Date.now();
+  // Wyczyść mapowania endpoint → token
+  for (const [ep, t] of endpointToToken.entries()) {
+    if (t === token) endpointToToken.delete(ep);
+  }
   console.log(`[Live] Session finished: ${token}`);
   res.json({ status: 'ok', message: 'Session finished' });
+});
+
+// ── GET /live/active/:endpoint — sprawdź czy znajomy ma aktywny trening ────────
+// Telefon polluje ten endpoint co 30s z własnym subscriptionEndpoint (encoded)
+// Zwraca token jeśli znajomy ma aktywną sesję, null jeśli nie
+
+liveRouter.get('/active/:endpoint', (req: Request, res: Response) => {
+  const endpoint = decodeURIComponent(req.params.endpoint);
+  const token    = endpointToToken.get(endpoint);
+
+  if (!token) {
+    res.json({ status: 'ok', active: false, token: null });
+    return;
+  }
+
+  const session = sessions.get(token);
+  if (!session || session.status === 'finished') {
+    endpointToToken.delete(endpoint);
+    res.json({ status: 'ok', active: false, token: null });
+    return;
+  }
+
+  res.json({
+    status:   'ok',
+    active:   true,
+    token,
+    userName: session.userName,
+    session:  session.status,
+  });
 });
 
 // ── GET /live (diagnostics) ───────────────────────────────────────────────────
