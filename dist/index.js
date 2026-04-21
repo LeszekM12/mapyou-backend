@@ -10,6 +10,7 @@ const helmet_1 = __importDefault(require("helmet"));
 const morgan_1 = __importDefault(require("morgan"));
 const workouts_js_1 = require("./workouts.js");
 const pushService_js_1 = require("./pushService.js");
+const liveTracking_js_1 = require("./liveTracking.js");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT ?? 3000;
 // ── Dozwolone originy ─────────────────────────────────────────────────────────
@@ -60,6 +61,7 @@ app.get('/health', (_req, res) => {
 });
 app.use('/workouts', workouts_js_1.workoutsRouter);
 app.use('/push', pushService_js_1.pushRouter);
+app.use('/live', liveTracking_js_1.liveRouter);
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => {
     res.status(404).json({ status: 'error', message: 'Route not found' });
