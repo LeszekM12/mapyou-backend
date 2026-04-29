@@ -1,0 +1,203 @@
+// ─── LIVE TRACKING ROUTER ────────────────────────────────────────────────────
+// Logika bez zmian — sesje nadal in-memory (live tracking nie wymaga persistence)
+// Tylko push notification idą przez MongoDB
+
+import { Router, Request, Response } from 'express';
+import webpush from 'web-push';
+import { PushSubscription } from '../models/PushSubscription.js';
+
+export const liveRouter = Router();
+
+// ── Typy ─────────────────────────────────────────────────────────────────────
+
+export type SessionStatus = 'running' | 'paused' | 'finished';
+
+export interface PositionPoint {
+  lat: number; lng: number; speed: number; timestamp: number;
+}
+
+export interface LiveSession {
+  token:        string;
+  userName:     string;
+  status:       SessionStatus;
+  startedAt:    number;
+  updatedAt:    number;
+  current:      PositionPoint | null;
+  history:      PositionPoint[];
+  notifiedSubs: string[];
+}
+
+// ── In-memory stores ──────────────────────────────────────────────────────────
+
+const sessions       = new Map<string, LiveSession>();
+const endpointToToken = new Map<string, string>();
+
+// Czyść zakończone sesje po 30 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, s] of sessions.entries()) {
+    if (s.status === 'finished' && now - s.updatedAt > 30 * 60 * 1000) {
+      sessions.delete(token);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// Invite kody
+interface InviteRecord { name: string; pushSub: object; created: number }
+const invites = new Map<string, InviteRecord>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, inv] of invites.entries()) {
+    if (now - inv.created > 7 * 24 * 60 * 60 * 1000) invites.delete(code);
+  }
+}, 60 * 60 * 1000);
+
+function randomCode(): string {
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+}
+
+// ── POST /live/start ──────────────────────────────────────────────────────────
+
+liveRouter.post('/start', async (req: Request, res: Response) => {
+  const { token, userName, liveUrl, friendSubs } = req.body as {
+    token: string; userName: string; liveUrl: string;
+    friendSubs: Array<{ endpoint: string; expirationTime: number | null; keys: { p256dh: string; auth: string } }>;
+  };
+
+  if (!token || !userName) {
+    return void res.status(400).json({ status: 'error', message: 'Missing token or userName' });
+  }
+
+  const session: LiveSession = {
+    token, userName, status: 'running',
+    startedAt: Date.now(), updatedAt: Date.now(),
+    current: null, history: [], notifiedSubs: [],
+  };
+  sessions.set(token, session);
+
+  // Wyślij push do znajomych
+  if (Array.isArray(friendSubs) && friendSubs.length) {
+    const payload = JSON.stringify({
+      title: `🏃 ${userName} started a workout!`,
+      body: 'Tap to watch the live route.',
+      url: liveUrl ?? '/',
+      icon: '/public/icon-192.png',
+    });
+    const results = await Promise.allSettled(
+      friendSubs.map(sub =>
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, expirationTime: sub.expirationTime ?? undefined, keys: sub.keys },
+          payload,
+        )
+      )
+    );
+    session.notifiedSubs = friendSubs.map(s => s.endpoint);
+    for (const sub of friendSubs) endpointToToken.set(sub.endpoint, token);
+    console.log(`[Live] Push sent to ${results.filter(r => r.status === 'fulfilled').length}/${friendSubs.length} friends`);
+  }
+
+  console.log(`[Live] Session started: ${token} by ${userName}`);
+  res.status(201).json({ status: 'ok', token });
+});
+
+// ── POST /live/update ─────────────────────────────────────────────────────────
+
+liveRouter.post('/update', (req: Request, res: Response) => {
+  const { token, lat, lng, speed, timestamp } = req.body as {
+    token: string; lat: number; lng: number; speed: number; timestamp: number;
+  };
+  const s = sessions.get(token);
+  if (!s) return void res.status(404).json({ status: 'error', message: 'Session not found' });
+  if (s.status === 'finished') return void res.status(409).json({ status: 'error', message: 'Session finished' });
+
+  const point: PositionPoint = { lat, lng, speed: speed ?? 0, timestamp: timestamp ?? Date.now() };
+  s.current = point;
+  s.updatedAt = Date.now();
+  s.history.push(point);
+  if (s.history.length > 10_000) s.history.shift();
+  res.json({ status: 'ok' });
+});
+
+// ── GET /live/status/:token ───────────────────────────────────────────────────
+
+liveRouter.get('/status/:token', (req: Request, res: Response) => {
+  const s = sessions.get(req.params.token);
+  if (!s) return void res.status(404).json({ status: 'error', message: 'Session not found' });
+  res.json({ status: 'ok', token: s.token, userName: s.userName, session: s.status,
+    startedAt: s.startedAt, updatedAt: s.updatedAt, current: s.current, history: s.history });
+});
+
+liveRouter.get('/:token', (req: Request, res: Response) => {
+  const s = sessions.get(req.params.token);
+  if (!s) return void res.json({ status: 'ok', session: 'not_found' });
+  res.json({ status: 'ok', session: s.status, userName: s.userName, updatedAt: s.updatedAt });
+});
+
+// ── POST /live/pause ──────────────────────────────────────────────────────────
+
+liveRouter.post('/pause', (req: Request, res: Response) => {
+  const s = sessions.get(req.body.token);
+  if (!s || s.status === 'finished') return void res.status(404).json({ status: 'error', message: 'Not found' });
+  s.status = 'paused'; s.updatedAt = Date.now();
+  res.json({ status: 'ok' });
+});
+
+// ── POST /live/resume ─────────────────────────────────────────────────────────
+
+liveRouter.post('/resume', (req: Request, res: Response) => {
+  const s = sessions.get(req.body.token);
+  if (!s || s.status === 'finished') return void res.status(404).json({ status: 'error', message: 'Not found' });
+  s.status = 'running'; s.updatedAt = Date.now();
+  res.json({ status: 'ok' });
+});
+
+// ── POST /live/finish ─────────────────────────────────────────────────────────
+
+liveRouter.post('/finish', (req: Request, res: Response) => {
+  const s = sessions.get(req.body.token);
+  if (!s) return void res.status(404).json({ status: 'error', message: 'Not found' });
+  s.status = 'finished'; s.updatedAt = Date.now();
+  for (const [ep, t] of endpointToToken.entries()) {
+    if (t === req.body.token) endpointToToken.delete(ep);
+  }
+  res.json({ status: 'ok' });
+});
+
+// ── GET /live/active/:endpoint ────────────────────────────────────────────────
+
+liveRouter.get('/active/:endpoint', (req: Request, res: Response) => {
+  const endpoint = decodeURIComponent(req.params.endpoint);
+  const token    = endpointToToken.get(endpoint);
+  if (!token) return void res.json({ status: 'ok', active: false, token: null });
+  const s = sessions.get(token);
+  if (!s || s.status === 'finished') {
+    endpointToToken.delete(endpoint);
+    return void res.json({ status: 'ok', active: false, token: null });
+  }
+  res.json({ status: 'ok', active: true, token, userName: s.userName, session: s.status });
+});
+
+// ── GET /live — diagnostics ───────────────────────────────────────────────────
+
+liveRouter.get('/', (_req: Request, res: Response) => {
+  const active = [...sessions.values()].filter(s => s.status !== 'finished').length;
+  res.json({ status: 'ok', totalSessions: sessions.size, activeSessions: active });
+});
+
+// ── POST /live/invite ─────────────────────────────────────────────────────────
+
+liveRouter.post('/invite', (req: Request, res: Response) => {
+  const { name, pushSub } = req.body as { name: string; pushSub: object };
+  if (!name || !pushSub) return void res.status(400).json({ status: 'error', message: 'Missing name or pushSub' });
+  const code = randomCode();
+  invites.set(code, { name, pushSub, created: Date.now() });
+  res.json({ status: 'ok', code });
+});
+
+// ── GET /live/invite/:code ────────────────────────────────────────────────────
+
+liveRouter.get('/invite/:code', (req: Request, res: Response) => {
+  const inv = invites.get(req.params.code.toUpperCase());
+  if (!inv) return void res.status(404).json({ status: 'error', message: 'Invite not found or expired' });
+  res.json({ status: 'ok', name: inv.name, pushSub: inv.pushSub });
+});

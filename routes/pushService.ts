@@ -1,0 +1,192 @@
+// ─── PUSH NOTIFICATION SERVICE ───────────────────────────────────────────────
+// Zmiana: subskrypcje w MongoDB zamiast in-memory — przeżyją restart Rendera!
+
+import webpush from 'web-push';
+import { Router, Request, Response } from 'express';
+import { PushSubscription } from '../models/PushSubscription.js';
+
+// ── VAPID setup ───────────────────────────────────────────────────────────────
+
+let vapidPublicKey:  string;
+let vapidPrivateKey: string;
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  vapidPublicKey  = process.env.VAPID_PUBLIC_KEY;
+  vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+  console.log('[Push] ✅ VAPID keys loaded from environment.');
+} else {
+  const keys = webpush.generateVAPIDKeys();
+  vapidPublicKey  = keys.publicKey;
+  vapidPrivateKey = keys.privateKey;
+  console.warn('⚠️  VAPID keys generated dynamically — zapisz je w .env na Render!');
+  console.warn(`VAPID_PUBLIC_KEY=${vapidPublicKey}`);
+  console.warn(`VAPID_PRIVATE_KEY=${vapidPrivateKey}`);
+}
+
+webpush.setVapidDetails(
+  `mailto:${process.env.VAPID_EMAIL ?? 'admin@mapyou.app'}`,
+  vapidPublicKey,
+  vapidPrivateKey,
+);
+
+// ── Wysyłka do listy subskrypcji ──────────────────────────────────────────────
+
+interface PushPayload {
+  title:  string;
+  body:   string;
+  icon?:  string;
+  badge?: string;
+  url?:   string;
+}
+
+async function sendToSubscriptions(
+  subs:    { subId: string; endpoint: string; expirationTime: number | null; keys: { p256dh: string; auth: string } }[],
+  payload: PushPayload,
+): Promise<{ sent: number; failed: number }> {
+  if (!subs.length) return { sent: 0, failed: 0 };
+
+  const results = await Promise.allSettled(
+    subs.map(sub =>
+      webpush.sendNotification(
+        { endpoint: sub.endpoint, expirationTime: sub.expirationTime ?? undefined, keys: sub.keys },
+        JSON.stringify(payload),
+      ).catch(async (err: { statusCode?: number }) => {
+        if (err.statusCode === 410) {
+          // Subskrypcja wygasła — usuń z MongoDB
+          await PushSubscription.deleteOne({ subId: sub.subId });
+          console.log(`[Push] Removed expired subscription: ${sub.subId}`);
+        }
+        throw err;
+      }),
+    ),
+  );
+
+  return {
+    sent:   results.filter(r => r.status === 'fulfilled').length,
+    failed: results.filter(r => r.status === 'rejected').length,
+  };
+}
+
+// ── Router ────────────────────────────────────────────────────────────────────
+
+export const pushRouter = Router();
+
+// Eksportuj klucz publiczny dla webpush live tracking
+export { vapidPublicKey };
+
+// GET /push/vapid-public-key
+pushRouter.get('/vapid-public-key', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', publicKey: vapidPublicKey });
+});
+
+// POST /push/subscribe
+pushRouter.post('/subscribe', async (req: Request, res: Response) => {
+  const body = req.body as {
+    userId?:         string;
+    deviceId?:       string;
+    endpoint?:       string;
+    expirationTime?: number | null;
+    keys?: { p256dh?: string; auth?: string };
+  };
+
+  if (!body.userId || !body.deviceId || !body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
+    return void res.status(400).json({ status: 'error', message: 'Missing required fields' });
+  }
+
+  try {
+    await PushSubscription.findOneAndUpdate(
+      { subId: `${body.userId}:${body.deviceId}` },
+      {
+        subId:          `${body.userId}:${body.deviceId}`,
+        userId:         body.userId,
+        deviceId:       body.deviceId,
+        endpoint:       body.endpoint,
+        expirationTime: body.expirationTime ?? null,
+        keys:           { p256dh: body.keys.p256dh, auth: body.keys.auth },
+      },
+      { upsert: true, new: true },
+    );
+    console.log(`[Push] ✅ Subscribed: ${body.userId}:${body.deviceId}`);
+    res.status(201).json({ status: 'ok', message: 'Subscribed' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: String(err) });
+  }
+});
+
+// POST /push/unsubscribe
+pushRouter.post('/unsubscribe', async (req: Request, res: Response) => {
+  const { endpoint, userId, deviceId } = req.body as {
+    endpoint?: string; userId?: string; deviceId?: string;
+  };
+
+  let result;
+  if (endpoint) {
+    result = await PushSubscription.deleteOne({ endpoint });
+  } else if (userId && deviceId) {
+    result = await PushSubscription.deleteOne({ subId: `${userId}:${deviceId}` });
+  } else {
+    return void res.status(400).json({ status: 'error', message: 'Provide endpoint or userId+deviceId' });
+  }
+
+  if (!result.deletedCount) {
+    return void res.status(404).json({ status: 'error', message: 'Subscription not found' });
+  }
+  res.json({ status: 'ok', message: 'Unsubscribed' });
+});
+
+// POST /push/notify/:userId
+pushRouter.post('/notify/:userId', async (req: Request, res: Response) => {
+  const { userId } = req.params;
+  const body = req.body as Partial<PushPayload>;
+
+  if (!body.title || !body.body) {
+    return void res.status(400).json({ status: 'error', message: 'Missing title or body' });
+  }
+
+  const subs = await PushSubscription.find({ userId });
+  if (!subs.length) {
+    return void res.json({ status: 'ok', message: 'No subscriptions for this user', sent: 0 });
+  }
+
+  const payload: PushPayload = {
+    title: body.title,
+    body:  body.body,
+    icon:  body.icon  ?? '/public/icon-192.png',
+    badge: body.badge ?? '/public/icon-192.png',
+    url:   body.url   ?? '/',
+  };
+
+  const { sent, failed } = await sendToSubscriptions(subs, payload);
+  console.log(`[Push] notify userId=${userId}: sent=${sent} failed=${failed}`);
+  res.json({ status: 'ok', sent, failed, devices: subs.length });
+});
+
+// POST /push/send — legacy endpoint (kompatybilność wsteczna)
+pushRouter.post('/send', async (req: Request, res: Response) => {
+  const body = req.body as Partial<PushPayload> & { userId?: string };
+  if (!body.userId) {
+    return void res.status(400).json({ status: 'error', message: 'userId required' });
+  }
+  req.params.userId = body.userId;
+  // Re-use notify logic
+  const subs = await PushSubscription.find({ userId: body.userId });
+  if (!subs.length) return void res.json({ status: 'ok', sent: 0 });
+  const { sent, failed } = await sendToSubscriptions(subs, {
+    title: body.title ?? 'MapYou',
+    body:  body.body  ?? '',
+    icon:  body.icon,
+    url:   body.url,
+  });
+  res.json({ status: 'ok', sent, failed });
+});
+
+// GET /push/subscriptions — diagnostyka
+pushRouter.get('/subscriptions', async (_req: Request, res: Response) => {
+  const all = await PushSubscription.find();
+  const byUser: Record<string, number> = {};
+  for (const s of all) byUser[s.userId] = (byUser[s.userId] ?? 0) + 1;
+  res.json({ status: 'ok', totalCount: all.length, byUser });
+});
+
+// Eksportuj sendToSubscriptions do użycia w liveTracking
+export { sendToSubscriptions };
