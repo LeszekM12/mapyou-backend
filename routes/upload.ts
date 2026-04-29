@@ -43,8 +43,8 @@ uploadRouter.post('/image', async (req: Request, res: Response) => {
   }
 
   // Limit rozmiaru — ~3MB base64 ≈ 2.25MB plik
-  if (image.length > 4_000_000) {
-    return void res.status(413).json({ status: 'error', message: 'Image too large (max ~3MB)' });
+  if (image.length > 50_000_000) {
+    return void res.status(413).json({ status: 'error', message: 'Image too large (max ~37MB)' });
   }
 
   try {
