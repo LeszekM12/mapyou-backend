@@ -17,7 +17,6 @@ import { recordsRouter }           from './routes/records.js';
 import { pushRouter }              from './routes/pushService.js';
 import { liveRouter }              from './routes/liveTracking.js';
 import { migrateRouter }           from './routes/migrate.js';
-import { uploadRouter } from './routes/upload.js';
 
 const app  = express();
 const PORT = process.env.PORT ?? 3000;
@@ -46,7 +45,7 @@ app.use(cors({
   credentials:  true,
 }));
 app.use(morgan('dev'));
-app.use(express.json({ limit: '5mb' }));   // 5mb — base64 photo support
+app.use(express.json({ limit: '50mb' }));  // 50mb — bulk migration with base64
 app.use(express.urlencoded({ extended: true }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -89,7 +88,6 @@ app.use('/records',            recordsRouter);
 app.use('/push',               pushRouter);
 app.use('/live',               liveRouter);
 app.use('/migrate',            migrateRouter);
-app.use('/upload',             uploadRouter);
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 

@@ -1,7 +1,4 @@
 // ─── MIGRATION ROUTER ────────────────────────────────────────────────────────
-// POST /migrate — przyjmuje wszystkie dane z IndexedDB naraz i zapisuje do Atlas
-// Frontend wywołuje to raz przy starcie po wznowieniu Rendera
-
 import { Router, Request, Response } from 'express';
 import { Workout }          from '../models/Workout.js';
 import { Activity }         from '../models/Activity.js';
@@ -12,14 +9,30 @@ import { User }             from '../models/User.js';
 
 export const migrateRouter = Router();
 
+// ── Usuń base64 przed zapisem do MongoDB ──────────────────────────────────────
+// Zdjęcia które nie trafiły do Cloudinary są zastępowane null
+// MongoDB ma limit 16MB per dokument — base64 łatwo go przekracza
+function stripBase64<T extends Record<string, unknown>>(items: T[]): T[] {
+  return items.map(item => {
+    const clean = { ...item };
+    for (const key of Object.keys(clean)) {
+      const val = clean[key];
+      if (typeof val === 'string' && val.startsWith('data:image/')) {
+        (clean as Record<string, unknown>)[key] = null;
+      }
+    }
+    return clean as T;
+  });
+}
+
 interface MigratePayload {
-  userId:             string;
-  workouts?:          Record<string, unknown>[];
-  activities?:        Record<string, unknown>[];
+  userId:              string;
+  workouts?:           Record<string, unknown>[];
+  activities?:         Record<string, unknown>[];
   enrichedActivities?: Record<string, unknown>[];
-  unifiedWorkouts?:   Record<string, unknown>[];
-  posts?:             Record<string, unknown>[];
-  profile?:           Record<string, unknown>;
+  unifiedWorkouts?:    Record<string, unknown>[];
+  posts?:              Record<string, unknown>[];
+  profile?:            Record<string, unknown>;
 }
 
 // POST /migrate/bulk
@@ -43,7 +56,8 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
   try {
     // Workouts
     if (workouts.length) {
-      const ops = workouts.map(item => ({
+      const clean = stripBase64(workouts);
+      const ops = clean.map(item => ({
         updateOne: {
           filter: { workoutId: item.workoutId ?? item.id, userId },
           update: { $set: { ...item, workoutId: item.workoutId ?? item.id, userId, syncedAt: new Date() } },
@@ -56,7 +70,8 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
 
     // Activities
     if (activities.length) {
-      const ops = activities.map(item => ({
+      const clean = stripBase64(activities);
+      const ops = clean.map(item => ({
         updateOne: {
           filter: { activityId: item.activityId ?? item.id, userId },
           update: { $set: { ...item, activityId: item.activityId ?? item.id, userId, syncedAt: new Date() } },
@@ -69,7 +84,8 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
 
     // EnrichedActivities
     if (enrichedActivities.length) {
-      const ops = enrichedActivities.map(item => ({
+      const clean = stripBase64(enrichedActivities);
+      const ops = clean.map(item => ({
         updateOne: {
           filter: { activityId: item.activityId ?? item.id, userId },
           update: { $set: { ...item, activityId: item.activityId ?? item.id, userId, syncedAt: new Date() } },
@@ -82,7 +98,8 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
 
     // UnifiedWorkouts
     if (unifiedWorkouts.length) {
-      const ops = unifiedWorkouts.map(item => ({
+      const clean = stripBase64(unifiedWorkouts);
+      const ops = clean.map(item => ({
         updateOne: {
           filter: { workoutId: item.workoutId ?? item.id, userId },
           update: { $set: { ...item, workoutId: item.workoutId ?? item.id, userId, syncedAt: new Date() } },
@@ -95,7 +112,8 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
 
     // Posts
     if (posts.length) {
-      const ops = posts.map(item => ({
+      const clean = stripBase64(posts);
+      const ops = clean.map(item => ({
         updateOne: {
           filter: { postId: item.postId ?? item.id, userId },
           update: { $set: { ...item, postId: item.postId ?? item.id, userId, syncedAt: new Date() } },
@@ -108,9 +126,10 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
 
     // Profile
     if (profile) {
+      const cleanProfile = stripBase64([profile])[0];
       await User.findOneAndUpdate(
         { userId },
-        { $set: { ...profile, userId } },
+        { $set: { ...cleanProfile, userId } },
         { upsert: true, new: true },
       );
       summary.profile = 1;
@@ -125,7 +144,7 @@ migrateRouter.post('/bulk', async (req: Request, res: Response) => {
   }
 });
 
-// GET /migrate/status/:userId — sprawdź ile danych jest już w Atlas
+// GET /migrate/status/:userId
 migrateRouter.get('/status/:userId', async (req: Request, res: Response) => {
   const { userId } = req.params;
   const [w, a, e, u, p] = await Promise.all([
