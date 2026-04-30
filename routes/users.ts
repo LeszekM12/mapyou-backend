@@ -4,6 +4,20 @@ import { User } from '../models/User.js';
 
 export const usersRouter = Router();
 
+// GET /users/public/:userId — publiczny profil (imię + avatar URL, bez danych prywatnych)
+usersRouter.get('/public/:userId', async (req: Request, res: Response) => {
+  const user = await User.findOne({ userId: req.params.userId });
+  if (!user) return void res.status(404).json({ status: 'error', message: 'User not found' });
+  res.json({
+    status: 'ok',
+    data: {
+      userId:    user.userId,
+      name:      user.name,
+      avatarB64: user.avatarB64,
+    },
+  });
+});
+
 // GET /users/:userId
 usersRouter.get('/:userId', async (req: Request, res: Response) => {
   const user = await User.findOne({ userId: req.params.userId });

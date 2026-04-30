@@ -18,6 +18,7 @@ import { pushRouter }              from './routes/pushService.js';
 import { liveRouter }              from './routes/liveTracking.js';
 import { migrateRouter }           from './routes/migrate.js';
 import { recoverRouter }           from './routes/recover.js';
+import { feedRouter }              from './routes/feed.js';
 
 const app  = express();
 const PORT = process.env.PORT ?? 3000;
@@ -90,6 +91,7 @@ app.use('/push',               pushRouter);
 app.use('/live',               liveRouter);
 app.use('/migrate',            migrateRouter);
 app.use('/recover',            recoverRouter);
+app.use('/feed',               feedRouter);
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 
