@@ -22,9 +22,12 @@ enrichedActivitiesRouter.post('/', async (req: Request, res: Response) => {
   if (!body.userId || !body.activityId) {
     return void res.status(400).json({ status: 'error', message: 'userId and activityId required' });
   }
+  // Usuń coords — są już w activities, nie duplikuj w enrichedActivities
+  const { coords: _coords, ...lean } = body as Record<string, unknown> & { coords?: unknown };
+  void _coords;
   const item = await EnrichedActivity.findOneAndUpdate(
-    { activityId: body.activityId as string, userId: body.userId as string },
-    { ...body, syncedAt: new Date() },
+    { activityId: lean.activityId as string, userId: lean.userId as string },
+    { ...lean, coords: [], syncedAt: new Date() },
     { upsert: true, new: true },
   );
   res.status(201).json({ status: 'ok', data: item });
@@ -41,13 +44,17 @@ enrichedActivitiesRouter.post('/bulk', async (req: Request, res: Response) => {
   if (!userId || !Array.isArray(items)) {
     return void res.status(400).json({ status: 'error', message: 'userId and items[] required' });
   }
-  const ops = items.map(item => ({
-    updateOne: {
-      filter: { activityId: item.activityId ?? item.id, userId },
-      update: { $set: { ...item, activityId: item.activityId ?? item.id, userId, syncedAt: new Date() } },
-      upsert: true,
-    },
-  }));
+  const ops = items.map(item => {
+    const { coords: _c, ...lean } = item as Record<string, unknown> & { coords?: unknown };
+    void _c;
+    return {
+      updateOne: {
+        filter: { activityId: lean.activityId ?? lean.id, userId },
+        update: { $set: { ...lean, activityId: lean.activityId ?? lean.id, userId, coords: [], syncedAt: new Date() } },
+        upsert: true,
+      },
+    };
+  });
   const result = await EnrichedActivity.bulkWrite(ops as any[]);
   res.json({ status: 'ok', upserted: result.upsertedCount, modified: result.modifiedCount });
 });

@@ -16,9 +16,13 @@ unifiedWorkoutsRouter.post('/', async (req: Request, res: Response) => {
   if (!body.userId || !body.workoutId) {
     return void res.status(400).json({ status: 'error', message: 'userId and workoutId required' });
   }
+  // Usuń coords — są już w activities, nie duplikuj w unifiedWorkouts
+  // Oszczędza ~50-100KB per aktywność w Atlas
+  const { coords: _coords, routeCoords: _routeCoords, ...lean } = body as Record<string, unknown> & { coords?: unknown; routeCoords?: unknown };
+  void _coords; void _routeCoords;
   const item = await UnifiedWorkout.findOneAndUpdate(
-    { workoutId: body.workoutId as string, userId: body.userId as string },
-    { ...body, syncedAt: new Date() },
+    { workoutId: lean.workoutId as string, userId: lean.userId as string },
+    { ...lean, coords: [], syncedAt: new Date() },
     { upsert: true, new: true },
   );
   res.status(201).json({ status: 'ok', data: item });
@@ -35,13 +39,18 @@ unifiedWorkoutsRouter.post('/bulk', async (req: Request, res: Response) => {
   if (!userId || !Array.isArray(items)) {
     return void res.status(400).json({ status: 'error', message: 'userId and items[] required' });
   }
-  const ops = items.map(item => ({
-    updateOne: {
-      filter: { workoutId: item.workoutId ?? item.id, userId },
-      update: { $set: { ...item, workoutId: item.workoutId ?? item.id, userId, syncedAt: new Date() } },
-      upsert: true,
-    },
-  }));
+  const ops = items.map(item => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { coords: _c, routeCoords: _rc, ...lean } = item as Record<string, unknown> & { coords?: unknown; routeCoords?: unknown };
+    void _c; void _rc;
+    return {
+      updateOne: {
+        filter: { workoutId: lean.workoutId ?? lean.id, userId },
+        update: { $set: { ...lean, workoutId: lean.workoutId ?? lean.id, userId, coords: [], syncedAt: new Date() } },
+        upsert: true,
+      },
+    };
+  });
   const result = await UnifiedWorkout.bulkWrite(ops as any[]);
   res.json({ status: 'ok', upserted: result.upsertedCount, modified: result.modifiedCount });
 });
