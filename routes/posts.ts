@@ -33,9 +33,12 @@ postsRouter.post('/', async (req: Request, res: Response) => {
   if (!body.userId || !body.postId) {
     return void res.status(400).json({ status: 'error', message: 'userId and postId required' });
   }
+  // Usuń avatarB64 — avatar jest już w users, nie duplikuj w każdym poście
+  const { avatarB64: _avatar, ...lean } = body as Record<string, unknown> & { avatarB64?: unknown };
+  void _avatar;
   const post = await Post.findOneAndUpdate(
-    { postId: body.postId as string, userId: body.userId as string },
-    { ...body, syncedAt: new Date() },
+    { postId: lean.postId as string, userId: lean.userId as string },
+    { ...lean, avatarB64: null, syncedAt: new Date() },
     { upsert: true, new: true },
   );
   res.status(201).json({ status: 'ok', data: post });
@@ -54,13 +57,17 @@ postsRouter.post('/bulk', async (req: Request, res: Response) => {
   if (!userId || !Array.isArray(items)) {
     return void res.status(400).json({ status: 'error', message: 'userId and items[] required' });
   }
-  const ops = items.map(item => ({
-    updateOne: {
-      filter: { postId: item.postId ?? item.id, userId },
-      update: { $set: { ...item, postId: item.postId ?? item.id, userId, syncedAt: new Date() } },
-      upsert: true,
-    },
-  }));
+  const ops = items.map(item => {
+    const { avatarB64: _a, ...lean } = item as Record<string, unknown> & { avatarB64?: unknown };
+    void _a;
+    return {
+      updateOne: {
+        filter: { postId: lean.postId ?? lean.id, userId },
+        update: { $set: { ...lean, postId: lean.postId ?? lean.id, userId, avatarB64: null, syncedAt: new Date() } },
+        upsert: true,
+      },
+    };
+  });
   const result = await Post.bulkWrite(ops as any[]);
   res.json({ status: 'ok', upserted: result.upsertedCount, modified: result.modifiedCount });
 });

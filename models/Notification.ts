@@ -46,4 +46,8 @@ const NotificationSchema = new Schema<INotification>(
 
 NotificationSchema.index({ userId: 1, notifId: 1 }, { unique: true });
 
+// TTL index — automatycznie usuwa powiadomienia starsze niż 90 dni
+// MongoDB sprawdza i czyści co ~60 sekund
+NotificationSchema.index({ syncedAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
+
 export const Notification = model<INotification>('Notification', NotificationSchema);
