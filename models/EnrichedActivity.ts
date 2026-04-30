@@ -9,6 +9,7 @@ export interface IEnrichedActivity extends Document {
   name:        string;
   description: string;
   photoUrl:    string | null;
+  photoPublicId: string | null;
   distanceKm:  number;
   durationSec: number;
   paceMinKm:   number;
@@ -28,6 +29,7 @@ const EnrichedActivitySchema = new Schema<IEnrichedActivity>(
     name:        { type: String, default: '' },
     description: { type: String, default: '' },
     photoUrl:    { type: String, default: null },
+    photoPublicId: { type: String, default: null },
     distanceKm:  { type: Number, default: 0 },
     durationSec: { type: Number, default: 0 },
     paceMinKm:   { type: Number, default: 0 },
