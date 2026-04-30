@@ -17,7 +17,7 @@ import { recordsRouter }           from './routes/records.js';
 import { pushRouter }              from './routes/pushService.js';
 import { liveRouter }              from './routes/liveTracking.js';
 import { migrateRouter }           from './routes/migrate.js';
-import { uploadRouter } from './routes/upload.js';
+import { recoverRouter }           from './routes/recover.js';
 
 const app  = express();
 const PORT = process.env.PORT ?? 3000;
@@ -89,7 +89,7 @@ app.use('/records',            recordsRouter);
 app.use('/push',               pushRouter);
 app.use('/live',               liveRouter);
 app.use('/migrate',            migrateRouter);
-app.use('/upload',             uploadRouter);
+app.use('/recover',            recoverRouter);
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 
