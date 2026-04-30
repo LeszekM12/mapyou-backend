@@ -43,7 +43,7 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // Invite kody
-interface InviteRecord { name: string; pushSub: object; created: number }
+interface InviteRecord { name: string; pushSub: object; userId: string | null; created: number }
 const invites = new Map<string, InviteRecord>();
 setInterval(() => {
   const now = Date.now();
@@ -187,10 +187,11 @@ liveRouter.get('/', (_req: Request, res: Response) => {
 // ── POST /live/invite ─────────────────────────────────────────────────────────
 
 liveRouter.post('/invite', (req: Request, res: Response) => {
-  const { name, pushSub } = req.body as { name: string; pushSub: object };
+  const { name, pushSub, userId } = req.body as { name: string; pushSub: object; userId?: string };
   if (!name || !pushSub) return void res.status(400).json({ status: 'error', message: 'Missing name or pushSub' });
   const code = randomCode();
-  invites.set(code, { name, pushSub, created: Date.now() });
+  invites.set(code, { name, pushSub, userId: userId ?? null, created: Date.now() });
+  console.log(`[Live] Invite created: ${code} for ${name} userId=${userId}`);
   res.json({ status: 'ok', code });
 });
 
@@ -199,5 +200,5 @@ liveRouter.post('/invite', (req: Request, res: Response) => {
 liveRouter.get('/invite/:code', (req: Request, res: Response) => {
   const inv = invites.get(req.params.code.toUpperCase());
   if (!inv) return void res.status(404).json({ status: 'error', message: 'Invite not found or expired' });
-  res.json({ status: 'ok', name: inv.name, pushSub: inv.pushSub });
+  res.json({ status: 'ok', name: inv.name, pushSub: inv.pushSub, friendUserId: inv.userId });
 });
