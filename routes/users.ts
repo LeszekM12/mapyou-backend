@@ -1,8 +1,18 @@
 // ─── USERS ROUTER ────────────────────────────────────────────────────────────
 import { Router, Request, Response } from 'express';
 import { User } from '../models/User.js';
+import { PushSubscription } from '../models/PushSubscription.js';
 
 export const usersRouter = Router();
+
+// POST /users/lookup-by-endpoint — znajdź userId po push endpoint
+usersRouter.post('/lookup-by-endpoint', async (req: Request, res: Response) => {
+  const { endpoint } = req.body as { endpoint?: string };
+  if (!endpoint) return void res.status(400).json({ status: 'error', message: 'endpoint required' });
+  const sub = await PushSubscription.findOne({ endpoint });
+  if (!sub) return void res.status(404).json({ status: 'error', message: 'Not found' });
+  res.json({ status: 'ok', userId: sub.userId });
+});
 
 // GET /users/public/:userId — publiczny profil (imię + avatar URL, bez danych prywatnych)
 usersRouter.get('/public/:userId', async (req: Request, res: Response) => {
