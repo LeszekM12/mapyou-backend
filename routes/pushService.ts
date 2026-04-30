@@ -94,6 +94,11 @@ pushRouter.post('/subscribe', async (req: Request, res: Response) => {
   }
 
   try {
+    // Usuń stary rekord z tym samym endpoint jeśli należał do innego userId
+    await PushSubscription.deleteOne({
+      endpoint: body.endpoint,
+      subId: { $ne: `${body.userId}:${body.deviceId}` }
+    });
     await PushSubscription.findOneAndUpdate(
       { subId: `${body.userId}:${body.deviceId}` },
       {
@@ -109,6 +114,7 @@ pushRouter.post('/subscribe', async (req: Request, res: Response) => {
     console.log(`[Push] ✅ Subscribed: ${body.userId}:${body.deviceId}`);
     res.status(201).json({ status: 'ok', message: 'Subscribed' });
   } catch (err) {
+    console.error('[Push] Subscribe error:', err);
     res.status(500).json({ status: 'error', message: String(err) });
   }
 });
